@@ -10,6 +10,7 @@ from io import BytesIO, TextIOWrapper, StringIO
 from zipfile import ZipFile
 import os
 import soundfile as sf
+import uuid
 import audioread
 from pydub import AudioSegment
 #from sklearn.multioutput import MultiOutputClassifier, ClassifierChain
@@ -21,6 +22,12 @@ import scipy
 import sys
 import argparse
 import shutil
+import winsound
+
+selected_k = 5
+selected_version = 2
+selected_model = ""
+selected_difficulty = ""
 
 #Main Function:
 def beat_map_synthesizer(song_path, song_name, difficulty, model, k=5, version = 2):
@@ -41,6 +48,25 @@ def beat_map_synthesizer(song_path, song_name, difficulty, model, k=5, version =
     version = for HMM models, can choose either 1 or 2. 1 was trained on a smaller, but potentially higher quality dataset (custom maps with over 90% rating on beatsaver.com), while 2 was trained on a larger dataset of custom maps with over 70% rating, so it may have a larger pool of "potential moves."
     ***
     """
+    
+    remove_files = ['info.dat', f"{difficulty}.dat", 'song.egg']
+
+    # Clean up old/stray generated files 
+    for file in remove_files:
+        try:
+            os.remove(file)
+        except FileNotFoundError:
+            pass
+    
+    # Add information to name
+    selected_model = model
+    selected_k = k
+    selected_version = version
+    selected_difficulty = difficulty
+    if model == "rate_modulated_segmented_HMM":
+        selected_model = "RMS_HMM"
+    song_name = f"{song_name}_{selected_difficulty}_{selected_model}_k{selected_k}_v{selected_version}"
+
     if model == 'random':
         random_mapper(song_path, song_name, difficulty)
     elif model == 'HMM':
@@ -146,12 +172,42 @@ def obstacles_writer(beat_times, difficulty):
 def zip_folder_exporter(song_name, difficulty):
     "This function exports the zip folder containing the info.dat, difficulty.dat, cover.jpg, and song.egg files."
     files = ['info.dat', f"{difficulty}.dat", 'cover.jpg', 'song.egg']
-    with ZipFile(f"{song_name}.zip", 'w') as custom:
-        for file in files:
-            custom.write(file)
+    # with ZipFile(f"{song_name}.zip", 'w') as custom:
+    #     for file in files:
+    #         custom.write(file)
+    # for file in files:
+    #     if file != 'cover.jpg':
+    #         os.remove(file)
+    folder_name = f"{song_name}"
+    try:
+        os.mkdir(folder_name)
+    except FileExistsError:
+        folder_name = f"{folder_name}_{get_short_uuid()}"
+        print(f"Folder already exists, created {folder_name} instead")
+        os.mkdir(folder_name)
+
+    dst_folder = "D:/Games/Steam/steamapps/common/Beat Saber/Beat Saber_Data/CustomWIPLevels"
+
+    #Create song folder
     for file in files:
-        if file != 'cover.jpg':
-            os.remove(file)
+        if file == 'cover.jpg':
+            shutil.copyfile(file, f"{folder_name}/{file}")
+        else:
+            os.rename(file, f"{folder_name}/{file}")
+
+    # Move song folder to beatsaber WIP folder
+    print(f"Moving {folder_name} to {dst_folder}/{folder_name}")
+    try:
+        shutil.move(f"{folder_name}", f"{dst_folder}/{folder_name}")
+    except:
+        new_uuid = get_short_uuid()
+        folder_name = f"{folder_name}_{new_uuid}"
+        moved_folder_name = f"{dst_folder}/{folder_name}_{new_uuid}"
+        print(f"{folder_name} already exists in {dst_folder}, so creating {moved_folder_name} instead")
+        shutil.move(f"{folder_name}", moved_folder_name)
+
+def get_short_uuid():
+    return uuid.uuid1()[:5]
 
 #Random Mapping Functions
 def random_mapper(song_path, song_name, difficulty):
@@ -185,6 +241,7 @@ def beat_features(song_path):
     #Isolate beats and beat times
     bpm, beat_frames = librosa.beat.beat_track(y=y, sr=sr, trim = False)
     beat_times = librosa.frames_to_time(beat_frames, sr=sr)
+    print(f"BPM for this song estimated to {bpm}")
     return bpm, beat_times, y, sr
 
 def random_notes_writer_v2(beat_times, difficulty, bpm):
@@ -305,7 +362,7 @@ def HMM_notes_writer(beat_list, difficulty, version):
                 note = {'_time': row['_time'],
                         '_lineIndex': int(row[f"notes_lineIndex_{num}"]),
                         '_lineLayer': int(row[f"notes_lineLayer_{num}"]),
-                        '_type': num,
+                        '_type': int(num),
                         '_cutDirection': int(row[f"notes_cutDirection_{num}"])}
                 notes_list.append(note)
    #Remove potential notes that come too early in the song:
@@ -495,7 +552,7 @@ def segmented_HMM_notes_writer(y, sr, k, difficulty, version = 2):
                 note = {'_time': row['_time'],
                         '_lineIndex': int(row[f"notes_lineIndex_{num}"]),
                         '_lineLayer': int(row[f"notes_lineLayer_{num}"]),
-                        '_type': num,
+                        '_type': int(num),
                         '_cutDirection': int(row[f"notes_cutDirection_{num}"])}
                 notes_list.append(note)
     #Remove potential notes that come too early in the song:
@@ -528,7 +585,7 @@ def rate_modulated_segmented_HMM_mapper(song_path, song_name, difficulty, versio
     music_file_converter(song_path)
     print("Zipping folder...")
     zip_folder_exporter(song_name, difficulty)
-    print("Finished! Look for zipped folder in your current path, unzip the folder, and place in the 'CustomMusic' folder in the Beat Saber directory")
+    print("Finished!")
 
 def choose_rate(db, difficulty):
     """
@@ -711,7 +768,7 @@ def rate_modulated_segmented_HMM_notes_writer(y, sr, k, difficulty, version):
                 note = {'_time': row['_time'],
                         '_lineIndex': int(row[f"notes_lineIndex_{num}"]),
                         '_lineLayer': int(row[f"notes_lineLayer_{num}"]),
-                        '_type': num,
+                        '_type': int(num),
                         '_cutDirection': int(row[f"notes_cutDirection_{num}"])}
                 notes_list.append(note)
     #Remove potential notes that come too early in the song:
@@ -735,4 +792,6 @@ if __name__ == '__main__':
     args = parser.parse_args()
     
     beat_map_synthesizer(args.song_path, args.song_name, args.difficulty, args.model, args.k, args.version)
+    
+    print('\a') # Make a sound when finished
     
